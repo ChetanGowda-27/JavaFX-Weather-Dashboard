@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 public class WeatherService {
 
     // !!! IMPORTANT: PASTE YOUR API KEY HERE !!!
-    private static final String API_KEY = "f54232d3fbb69478c381b212562fffa0";
+    private static final String API_KEY = "YOUR API KEY HERE";
 
     private static final String WEATHER_URL = "https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=metric";
     private static final String FORECAST_URL = "https://api.openweathermap.org/data/2.5/forecast?q=%s&appid=%s&units=metric";
