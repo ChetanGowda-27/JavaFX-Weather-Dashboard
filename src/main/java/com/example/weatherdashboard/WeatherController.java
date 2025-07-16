@@ -4,22 +4,26 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
-import javafx.geometry.Pos;
-import javafx.scene.control.Label;
-import javafx.scene.control.TextField;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.LineChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.XYChart;
+import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.prefs.Preferences;
 
 public class WeatherController {
 
+    // FXML elements from the view
     @FXML private TextField cityTextField;
     @FXML private Label errorLabel;
     @FXML private VBox weatherDetailsPane;
@@ -29,16 +33,51 @@ public class WeatherController {
     @FXML private Label conditionLabel;
     @FXML private Label humidityLabel;
     @FXML private VBox forecastPane;
-    @FXML private HBox forecastContainer;
+    @FXML private ProgressIndicator loadingIndicator;
+    @FXML private Label feelsLikeLabel;
+    @FXML private ToggleGroup unitsToggleGroup;
+    @FXML private ToggleButton celsiusButton;
+    @FXML private ToggleButton fahrenheitButton;
+    @FXML private LineChart<String, Number> forecastChart;
+    @FXML private CategoryAxis forecastXAxis;
+    @FXML private NumberAxis forecastYAxis;
 
     private final WeatherService weatherService = new WeatherService();
     private static final String ICON_URL_PREFIX = "https://openweathermap.org/img/wn/";
     private static final String ICON_URL_SUFFIX = "@2x.png";
 
+    private Preferences prefs;
+    private String currentUnits = "metric";
+    private static ScheduledExecutorService autoRefreshExecutor;
+
     @FXML
     public void initialize() {
-        // Hide details until a successful search
-        clearUI();
+        prefs = Preferences.userNodeForPackage(WeatherController.class);
+
+        celsiusButton.setUserData("metric");
+        fahrenheitButton.setUserData("imperial");
+        celsiusButton.setSelected(true);
+        unitsToggleGroup.selectedToggleProperty().addListener((obs, oldToggle, newToggle) -> {
+            if (newToggle != null) {
+                this.currentUnits = (String) newToggle.getUserData();
+                handleSearchAction();
+            } else {
+                // Prevent deselection
+                if (oldToggle != null) {
+                    oldToggle.setSelected(true);
+                }
+            }
+        });
+
+        startAutoRefresh();
+
+        String lastCity = prefs.get("lastSearchedCity", "");
+        if (!lastCity.isEmpty()) {
+            cityTextField.setText(lastCity);
+            handleSearchAction();
+        } else {
+            clearUI();
+        }
     }
 
     @FXML
@@ -48,13 +87,18 @@ public class WeatherController {
             showError("City name cannot be empty.");
             return;
         }
+
         clearUI();
+        loadingIndicator.setVisible(true);
+        loadingIndicator.setManaged(true);
 
-        // Asynchronously fetch both current weather and forecast data
-        weatherService.getWeatherData(city).thenAccept(this::updateCurrentWeatherUI)
-                .exceptionally(this::handleApiError);
+        weatherService.getWeatherData(city, currentUnits)
+                .thenAccept(this::updateCurrentWeatherUI)
+                .exceptionally(this::handleApiError)
+                .whenComplete((v, e) -> hideLoadingSpinner());
 
-        weatherService.getForecastData(city).thenAccept(this::updateForecastUI)
+        weatherService.getForecastData(city, currentUnits)
+                .thenAccept(this::updateForecastUI)
                 .exceptionally(this::handleApiError);
     }
 
@@ -64,19 +108,19 @@ public class WeatherController {
             weatherDetailsPane.setManaged(true);
 
             String cityName = data.get("name").getAsString();
-            String country = data.getAsJsonObject("sys").get("country").getAsString();
-            locationLabel.setText(cityName + ", " + country);
+            locationLabel.setText(cityName + ", " + data.getAsJsonObject("sys").get("country").getAsString());
 
             JsonObject main = data.getAsJsonObject("main");
-            temperatureLabel.setText(String.format("%.0f°C", main.get("temp").getAsDouble()));
+            String unitSymbol = currentUnits.equals("metric") ? "°C" : "°F";
+            temperatureLabel.setText(String.format("%.0f%s", main.get("temp").getAsDouble(), unitSymbol));
+            feelsLikeLabel.setText("Feels like: " + String.format("%.0f%s", main.get("feels_like").getAsDouble(), unitSymbol));
             humidityLabel.setText("Humidity: " + main.get("humidity").getAsInt() + "%");
 
             JsonObject weather = data.getAsJsonArray("weather").get(0).getAsJsonObject();
-            String description = weather.get("description").getAsString();
-            conditionLabel.setText(capitalize(description));
+            conditionLabel.setText(capitalize(weather.get("description").getAsString()));
+            weatherIcon.setImage(new Image(ICON_URL_PREFIX + weather.get("icon").getAsString() + ICON_URL_SUFFIX));
 
-            String iconCode = weather.get("icon").getAsString();
-            weatherIcon.setImage(new Image(ICON_URL_PREFIX + iconCode + ICON_URL_SUFFIX));
+            prefs.put("lastSearchedCity", cityName);
         });
     }
 
@@ -84,72 +128,51 @@ public class WeatherController {
         Platform.runLater(() -> {
             forecastPane.setVisible(true);
             forecastPane.setManaged(true);
-            forecastContainer.getChildren().clear();
 
+            XYChart.Series<String, Number> series = new XYChart.Series<>();
             JsonArray forecastList = data.getAsJsonArray("list");
-            List<JsonObject> dailyForecasts = new ArrayList<>();
-            for (int i = 0; i < forecastList.size(); i += 8) { // API provides data every 3 hours, so 8 intervals = 24 hours
-                dailyForecasts.add(forecastList.get(i).getAsJsonObject());
+
+            for (int i = 0; i < forecastList.size(); i += 8) {
+                JsonObject forecastItem = forecastList.get(i).getAsJsonObject();
+                long dt = forecastItem.get("dt").getAsLong();
+                String day = Instant.ofEpochSecond(dt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE"));
+                double temp = forecastItem.getAsJsonObject("main").get("temp").getAsDouble();
+                series.getData().add(new XYChart.Data<>(day, temp));
             }
 
-            for (JsonObject forecastItem : dailyForecasts) {
-                VBox forecastBox = createForecastBox(forecastItem);
-                forecastContainer.getChildren().add(forecastBox);
-            }
+            forecastChart.getData().clear();
+            forecastChart.getData().add(series);
+            forecastYAxis.setLabel("Temp (" + (currentUnits.equals("metric") ? "°C" : "°F") + ")");
         });
     }
 
-    private VBox createForecastBox(JsonObject forecastData) {
-        long dt = forecastData.get("dt").getAsLong();
-        String day = Instant.ofEpochSecond(dt).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE"));
-
-        JsonObject main = forecastData.getAsJsonObject("main");
-        String temp = String.format("%.0f°C", main.get("temp").getAsDouble());
-
-        JsonObject weather = forecastData.getAsJsonArray("weather").get(0).getAsJsonObject();
-        String iconCode = weather.get("icon").getAsString();
-
-        Label dayLabel = new Label(day);
-        dayLabel.setStyle("-fx-text-fill: white; -fx-font-weight: bold;");
-
-        ImageView iconView = new ImageView(new Image(ICON_URL_PREFIX + iconCode + ICON_URL_SUFFIX));
-        iconView.setFitHeight(40);
-        iconView.setFitWidth(40);
-
-        Label tempLabel = new Label(temp);
-        tempLabel.setStyle("-fx-text-fill: white;");
-
-        VBox box = new VBox(5, dayLabel, iconView, tempLabel);
-        box.setAlignment(Pos.CENTER);
-        box.getStyleClass().add("forecast-box");
-        return box;
-    }
-
-    private Void handleApiError(Throwable error) {
-        showError(error.getCause().getMessage());
-        return null; // Required for exceptionally()
-    }
-
-    private void showError(String message) {
-        Platform.runLater(() -> {
-            errorLabel.setText(message);
-            weatherDetailsPane.setVisible(false);
-            weatherDetailsPane.setManaged(false);
-            forecastPane.setVisible(false);
-            forecastPane.setManaged(false);
+    private void startAutoRefresh() {
+        autoRefreshExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread t = new Thread(runnable, "Auto-Refresh-Thread");
+            t.setDaemon(true);
+            return t;
         });
+
+        Runnable refreshTask = () -> Platform.runLater(this::handleSearchAction);
+
+        autoRefreshExecutor.scheduleAtFixedRate(refreshTask, 30, 30, TimeUnit.MINUTES);
     }
 
+    public static void shutdown() {
+        if (autoRefreshExecutor != null && !autoRefreshExecutor.isShutdown()) {
+            autoRefreshExecutor.shutdownNow();
+        }
+    }
+
+    private void hideLoadingSpinner() { Platform.runLater(() -> { loadingIndicator.setVisible(false); loadingIndicator.setManaged(false); }); }
+    private Void handleApiError(Throwable error) { showError(error.getCause().getMessage()); return null; }
+    private void showError(String message) { Platform.runLater(() -> { clearUI(); errorLabel.setText(message); hideLoadingSpinner(); }); }
     private void clearUI() {
         errorLabel.setText("");
         weatherDetailsPane.setVisible(false);
+        weatherDetailsPane.setManaged(false);
         forecastPane.setVisible(false);
+        forecastPane.setManaged(false);
     }
-
-    private String capitalize(String text) {
-        if (text == null || text.isEmpty()) {
-            return text;
-        }
-        return text.substring(0, 1).toUpperCase() + text.substring(1);
-    }
+    private String capitalize(String text) { return text == null || text.isEmpty() ? text : text.substring(0, 1).toUpperCase() + text.substring(1); }
 }

@@ -1,38 +1,69 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.geometry.Insets?>
+<?import javafx.scene.chart.CategoryAxis?>
+<?import javafx.scene.chart.LineChart?>
+<?import javafx.scene.chart.NumberAxis?>
 <?import javafx.scene.control.Button?>
 <?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressIndicator?>
+<?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.TextField?>
+<?import javafx.scene.control.ToggleButton?>
+<?import javafx.scene.control.ToggleGroup?>
 <?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.VBox?>
 
-<VBox alignment="TOP_CENTER" prefHeight="550.0" prefWidth="400.0" spacing="10.0" styleClass="root" stylesheets="@style.css" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.example.weatherdashboard.WeatherController">
-    <padding>
-        <Insets bottom="20.0" left="20.0" right="20.0" top="20.0" />
-    </padding>
-    <Label styleClass="title-label" text="Weather Dashboard" />
-    <HBox alignment="CENTER" spacing="10.0">
-        <TextField fx:id="cityTextField" onAction="#handleSearchAction" promptText="Enter City Name" HBox.hgrow="ALWAYS" />
-        <Button fx:id="searchButton" onAction="#handleSearchAction" text="Search" />
-    </HBox>
-    <Label fx:id="errorLabel" styleClass="error-label" />
-    <VBox fx:id="weatherDetailsPane" alignment="CENTER" managed="false" spacing="5.0" visible="false">
-        <padding>
-            <Insets top="10.0" />
-        </padding>
-        <Label fx:id="locationLabel" styleClass="location-label" />
-        <ImageView fx:id="weatherIcon" fitHeight="100.0" fitWidth="100.0" pickOnBounds="true" preserveRatio="true" />
-        <Label fx:id="temperatureLabel" styleClass="temperature-label" />
-        <Label fx:id="conditionLabel" styleClass="condition-label" />
-        <Label fx:id="humidityLabel" styleClass="details-label" />
-    </VBox>
-    <VBox fx:id="forecastPane" alignment="CENTER" managed="false" spacing="10.0" visible="false">
-        <padding>
-            <Insets top="20.0" />
-        </padding>
-        <Label styleClass="forecast-title" text="5-Day Forecast" />
-        <HBox fx:id="forecastContainer" alignment="CENTER" spacing="12.0" />
-    </VBox>
-</VBox>
+<!-- NEW: The root element is now a ScrollPane to allow scrolling. -->
+<ScrollPane fitToWidth="true" prefHeight="750.0" prefWidth="550.0" style="-fx-background-color: transparent;" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.example.weatherdashboard.WeatherController">
+    <content>
+        <!-- NEW: The original VBox is now the content of the ScrollPane. -->
+        <!-- The 'root' styleClass is kept here so the background scrolls with the content. -->
+        <VBox alignment="TOP_CENTER" spacing="10.0" styleClass="root">
+            <padding>
+                <Insets bottom="20.0" left="20.0" right="20.0" top="20.0" />
+            </padding>
+            <Label styleClass="title-label" text="Weather Dashboard v2.0" />
+            <HBox alignment="CENTER" spacing="10.0">
+                <TextField fx:id="cityTextField" onAction="#handleSearchAction" promptText="Enter City Name" HBox.hgrow="ALWAYS" />
+                <Button fx:id="searchButton" onAction="#handleSearchAction" text="Search" />
+            </HBox>
+            <ProgressIndicator fx:id="loadingIndicator" managed="false" visible="false" />
+            <Label fx:id="errorLabel" styleClass="error-label" />
+            <VBox fx:id="weatherDetailsPane" alignment="CENTER" managed="false" spacing="5.0" visible="false">
+                <padding>
+                    <Insets top="10.0" />
+                </padding>
+                <Label fx:id="locationLabel" styleClass="location-label" />
+                <HBox alignment="CENTER" spacing="5.0">
+                    <ToggleButton fx:id="celsiusButton" mnemonicParsing="false" styleClass="toggle-button-left" text="°C">
+                        <toggleGroup>
+                            <ToggleGroup fx:id="unitsToggleGroup" />
+                        </toggleGroup>
+                    </ToggleButton>
+                    <ToggleButton fx:id="fahrenheitButton" mnemonicParsing="false" styleClass="toggle-button-right" text="°F" toggleGroup="$unitsToggleGroup" />
+                </HBox>
+                <ImageView fx:id="weatherIcon" fitHeight="100.0" fitWidth="100.0" pickOnBounds="true" preserveRatio="true" />
+                <Label fx:id="temperatureLabel" styleClass="temperature-label" />
+                <Label fx:id="feelsLikeLabel" styleClass="details-label" />
+                <Label fx:id="conditionLabel" styleClass="condition-label" />
+                <Label fx:id="humidityLabel" styleClass="details-label" />
+            </VBox>
+            <VBox fx:id="forecastPane" alignment="CENTER" managed="false" VBox.vgrow="ALWAYS" visible="false">
+                <padding>
+                    <Insets top="20.0" />
+                </padding>
+                <Label styleClass="forecast-title" text="5-Day Forecast" />
+                <LineChart fx:id="forecastChart" animated="true" legendVisible="false">
+                    <xAxis>
+                        <CategoryAxis fx:id="forecastXAxis" side="BOTTOM" />
+                    </xAxis>
+                    <yAxis>
+                        <NumberAxis fx:id="forecastYAxis" side="LEFT" />
+                    </yAxis>
+                </LineChart>
+            </VBox>
+        </VBox>
+    </content>
+</ScrollPane>
